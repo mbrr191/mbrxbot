@@ -1,62 +1,237 @@
 import os
-import re
-import subprocess
-import tempfile
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import yt_dlp
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+Application,
+CommandHandler,
+MessageHandler,
+CallbackQueryHandler,
+filters,
+ContextTypes,
+)
 
-BOT_TOKEN = "8610242867:AAEQEifZxyjsWvaxCsapUyOVEx1LSmEhVhM"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(**name**)
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+BOT_TOKEN = os.environ.get(“BOT_TOKEN”, “YOUR_BOT_TOKEN_HERE”)
 
-TWITTER_PATTERN = re.compile(r'https?://(www\.)?(twitter\.com|x\.com)/\S+/status/\d+')
+# ─────────────────────────────────────────────
+
+# /start
+
+# ─────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 أهلاً! أرسل رابط تويتر/X وأنا أنزل الفيديو لك!")
+keyboard = [
+[InlineKeyboardButton(“🎬 تحميل فيديو”, callback_data=“menu_video”)],
+[InlineKeyboardButton(“🔍 بحث عن ممثل بالصورة”, callback_data=“menu_actor”)],
+[InlineKeyboardButton(“❓ مساعدة”, callback_data=“menu_help”)],
+]
+reply_markup = InlineKeyboardMarkup(keyboard)
 
-async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message_text = update.message.text.strip()
-    match = TWITTER_PATTERN.search(message_text)
-    if not match:
-        await update.message.reply_text("❌ أرسل رابط تويتر/X صحيح!")
-        return
-    url = match.group(0)
-    status_msg = await update.message.reply_text("⏳ جاري التنزيل...")
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "video.%(ext)s")
-            result = subprocess.run(
-                ["yt-dlp", "-f", "best[ext=mp4]/best", "--merge-output-format", "mp4", "-o", output_path, "--no-playlist", url],
-                capture_output=True, text=True, timeout=120
-            )
-            if result.returncode != 0:
-                raise Exception(result.stderr)
-            video_file = None
-            for f in os.listdir(tmpdir):
-                if f.startswith("video"):
-                    video_file = os.path.join(tmpdir, f)
-                    break
-            if not video_file:
-                raise Exception("ما اتنزل")
-            if os.path.getsize(video_file) > 50 * 1024 * 1024:
-                await status_msg.edit_text("⚠️ الفيديو أكبر من 50MB")
-                return
-            await status_msg.edit_text("📤 جاري الإرسال...")
-            with open(video_file, 'rb') as vf:
-                await update.message.reply_video(video=vf, caption="✅ تم! | @MBRxBot", supports_streaming=True)
-            await status_msg.delete()
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await status_msg.edit_text("❌ ما قدرت أنزل الفيديو، تأكد أن التغريدة فيها فيديو")
+```
+await update.message.reply_text(
+    "👋 أهلاً! أنا *MBRxBot*\n\n"
+    "اختر ما تريد من الأزرار أدناه:",
+    parse_mode="Markdown",
+    reply_markup=reply_markup,
+)
+```
+
+# ─────────────────────────────────────────────
+
+# Callback handlers for inline buttons
+
+# ─────────────────────────────────────────────
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+query = update.callback_query
+await query.answer()
+
+```
+if query.data == "menu_video":
+    await query.message.reply_text(
+        "🎬 *تحميل فيديو*\n\n"
+        "أرسل رابط الفيديو من:\n"
+        "• Twitter / X\n"
+        "• TikTok\n"
+        "• Instagram\n\n"
+        "وسأحمله لك مباشرةً ✅",
+        parse_mode="Markdown",
+    )
+    context.user_data["mode"] = "video"
+
+elif query.data == "menu_actor":
+    await query.message.reply_text(
+        "🔍 *بحث عن ممثل بالصورة*\n\n"
+        "أرسل صورة الممثل/الممثلة وسأفتح لك بحث Google Lens مباشرةً 🎭",
+        parse_mode="Markdown",
+    )
+    context.user_data["mode"] = "actor"
+
+elif query.data == "menu_help":
+    keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="menu_back")]]
+    await query.message.reply_text(
+        "❓ *كيفية الاستخدام:*\n\n"
+        "1️⃣ اضغط *تحميل فيديو* ثم أرسل الرابط\n"
+        "2️⃣ اضغط *بحث عن ممثل* ثم أرسل الصورة\n\n"
+        "📌 المنصات المدعومة للتحميل:\n"
+        "Twitter/X • TikTok • Instagram",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+elif query.data == "menu_back":
+    keyboard = [
+        [InlineKeyboardButton("🎬 تحميل فيديو", callback_data="menu_video")],
+        [InlineKeyboardButton("🔍 بحث عن ممثل بالصورة", callback_data="menu_actor")],
+        [InlineKeyboardButton("❓ مساعدة", callback_data="menu_help")],
+    ]
+    await query.message.reply_text(
+        "اختر ما تريد:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+```
+
+# ─────────────────────────────────────────────
+
+# Video download
+
+# ─────────────────────────────────────────────
+
+SUPPORTED_DOMAINS = (“twitter.com”, “x.com”, “tiktok.com”, “instagram.com”)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+text = update.message.text or “”
+
+```
+if any(domain in text for domain in SUPPORTED_DOMAINS):
+    await download_video(update, context, text.strip())
+else:
+    await update.message.reply_text(
+        "ℹ️ استخدم /start لاختيار الميزة التي تريدها.",
+    )
+```
+
+async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
+msg = await update.message.reply_text(“⏳ جاري التحميل…”)
+
+```
+ydl_opts = {
+    "format": "best[filesize<50M]/best",
+    "outtmpl": "/tmp/%(id)s.%(ext)s",
+    "quiet": True,
+    "no_warnings": True,
+}
+
+try:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        file_path = ydl.prepare_filename(info)
+
+    await msg.delete()
+    await update.message.reply_video(
+        video=open(file_path, "rb"),
+        caption="✅ تم التحميل بنجاح!",
+    )
+    os.remove(file_path)
+
+except Exception as e:
+    logger.error(f"Download error: {e}")
+    await msg.edit_text(
+        "❌ فشل التحميل. تأكد من:\n"
+        "• أن الرابط صحيح\n"
+        "• أن الفيديو غير خاص (private)\n"
+        "• أن حجمه أقل من 50MB"
+    )
+```
+
+# ─────────────────────────────────────────────
+
+# Actor search via Google Lens
+
+# ─────────────────────────────────────────────
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+mode = context.user_data.get(“mode”, “”)
+
+```
+if mode != "actor":
+    keyboard = [
+        [InlineKeyboardButton("🔍 ابحث عن هذا الممثل", callback_data="do_lens")],
+    ]
+    context.user_data["pending_photo"] = update.message.photo[-1].file_id
+    await update.message.reply_text(
+        "📸 استلمت الصورة! هل تريد البحث عن الممثل؟",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return
+
+await send_lens_link(update, context)
+```
+
+async def send_lens_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+photo = update.message.photo[-1] if update.message.photo else None
+if not photo:
+await update.message.reply_text(“❌ لم أتمكن من قراءة الصورة.”)
+return
+
+```
+file = await context.bot.get_file(photo.file_id)
+file_url = file.file_path
+
+lens_url = f"https://lens.google.com/uploadbyurl?url={file_url}"
+
+keyboard = [[InlineKeyboardButton("🔍 افتح Google Lens", url=lens_url)]]
+await update.message.reply_text(
+    "✅ اضغط الزر أدناه للبحث عن الممثل في Google Lens:",
+    reply_markup=InlineKeyboardMarkup(keyboard),
+)
+context.user_data["mode"] = ""
+```
+
+async def lens_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+query = update.callback_query
+await query.answer()
+
+```
+file_id = context.user_data.get("pending_photo")
+if not file_id:
+    await query.message.reply_text("❌ لم أجد الصورة، أرسلها مرة أخرى.")
+    return
+
+file = await context.bot.get_file(file_id)
+file_url = file.file_path
+lens_url = f"https://lens.google.com/uploadbyurl?url={file_url}"
+
+keyboard = [[InlineKeyboardButton("🔍 افتح Google Lens", url=lens_url)]]
+await query.message.reply_text(
+    "✅ اضغط الزر أدناه للبحث عن الممثل في Google Lens:",
+    reply_markup=InlineKeyboardMarkup(keyboard),
+)
+context.user_data["pending_photo"] = None
+```
+
+# ─────────────────────────────────────────────
+
+# Main
+
+# ─────────────────────────────────────────────
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
-    print("🤖 البوت شغال!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+app = Application.builder().token(BOT_TOKEN).build()
 
-if __name__ == "__main__":
-    main()
+```
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(lens_callback, pattern="^do_lens$"))
+app.add_handler(CallbackQueryHandler(button_handler))
+app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+logger.info("Bot is running...")
+app.run_polling()
+```
+
+if **name** == “**main**”:
+main()
