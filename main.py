@@ -1,7 +1,9 @@
 import os
+import re
 import logging
 import yt_dlp
 import httpx
+from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -23,6 +25,25 @@ sent_news_ids: set = set()
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def is_recent(time_str: str, max_minutes: int = 15) -> bool:
+    """Returns True if the article was published within max_minutes."""
+    if not time_str:
+        return True
+    m = re.match(r'منذ\s+(\d+)\s+(دقيقة|دقائق|ساعة|ساعات)', time_str)
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2)
+        minutes_ago = amount * 60 if ('ساعة' in unit or 'ساعات' in unit) else amount
+        return minutes_ago <= max_minutes
+    for fmt in ('%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'):
+        try:
+            dt = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - dt).total_seconds() / 60
+            return age <= max_minutes
+        except ValueError:
+            continue
+    return True
 
 def priority_icon(p: str) -> str:
     return {'critical': '🔴', 'high': '🟠', 'medium': '🟡'}.get(p, '🟢')
@@ -561,7 +582,9 @@ async def job_send_alerts(context: ContextTypes.DEFAULT_TYPE):
         news = await fetch_news()
         new_critical = [
             n for n in news
-            if n.get('priority') == 'critical' and n.get('id') not in sent_news_ids
+            if n.get('priority') == 'critical'
+            and n.get('id') not in sent_news_ids
+            and is_recent(n.get('time', ''))
         ]
         for n in new_critical[:3]:
             sent_news_ids.add(n.get('id'))
