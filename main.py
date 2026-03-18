@@ -27,8 +27,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == 'menu_news':
         msg = await query.message.reply_text('⏳ جاري جلب الأخبار...')
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(f'{INTEL_SERVER}/api/news')
+                r.raise_for_status()
                 news = r.json().get('news', [])[:8]
             text = '📡 آخر الأخبار:\n\n'
             for i, n in enumerate(news, 1):
@@ -36,8 +37,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 e = '🔴' if p=='critical' else '🟠' if p=='high' else '🟡' if p=='medium' else '🟢'
                 text += f'{e} {i}. {n.get("title","")[:80]}\n📌 {n.get("source","")} • {n.get("time","")}\n\n'
             await msg.edit_text(text)
-        except:
-            await msg.edit_text('⚠️ تعذر جلب الأخبار')
+        except Exception as e:
+            logger.error(f'News error: {e}')
+            await msg.edit_text(f'⚠️ تعذر جلب الأخبار: {e}')
     elif query.data == 'menu_video':
         await query.message.reply_text('أرسل رابط الفيديو من Twitter/TikTok/Instagram')
         context.user_data['mode'] = 'video'
