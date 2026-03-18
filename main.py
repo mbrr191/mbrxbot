@@ -97,7 +97,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _news_analysis(query)
 
     elif data == 'iran_analysis':
-        await _iran_analysis(query)
+        await _iran_menu(query)
+
+    elif data == 'iran_general':
+        await _iran_general(query)
+
+    elif data == 'iran_uae':
+        await _iran_uae(query)
+
+    elif data == 'iran_usa_war':
+        await _iran_usa_war(query)
 
     elif data == 'news_region':
         await _region_menu(query)
@@ -205,93 +214,291 @@ async def _news_analysis(query):
         await msg.edit_text(f'⚠️ خطأ في التحليل: {e}')
 
 
-# ─── Iran Strike Analysis ────────────────────────────────────────────────────
+# ─── Iran Analysis Suite ─────────────────────────────────────────────────────
 
-IRAN_KEYWORDS = ('إيران', 'ايران', 'Iran', 'طهران', 'خامنئي', 'الحرس الثوري',
-                 'بالستي', 'صاروخ', 'نووي', 'فيلق القدس')
+IRAN_KW   = ('إيران','ايران','Iran','طهران','خامنئي','الحرس الثوري','بالستي','صاروخ','نووي','فيلق القدس','خامنئي')
+UAE_KW    = ('الإمارات','إمارات','UAE','أبوظبي','دبي','أبو ظبي')
+USA_KW    = ('أمريكا','الولايات المتحدة','ترامب','بايدن','البنتاغون','واشنطن','أمريكي','US ','USA')
+EXPERT_SRC = ('reuters','bbc','new york times','foreign policy','al monitor',
+               'brookings','cnn','the guardian','economist','رويترز','بي بي سي')
 
-async def _iran_analysis(query):
+def _calc_risk(news_list: list) -> tuple:
+    """Return (risk 0-100, avg_sentiment, critical_cnt, high_cnt)."""
+    if not news_list:
+        return 0, 50, 0, 0
+    sentiments   = [n.get('sentiment', 50) for n in news_list]
+    avg_sent     = sum(sentiments) / len(sentiments)
+    critical_cnt = sum(1 for n in news_list if n.get('priority') == 'critical')
+    high_cnt     = sum(1 for n in news_list if n.get('priority') == 'high')
+    risk = 0
+    if avg_sent < 25:   risk += 35
+    elif avg_sent < 40: risk += 20
+    elif avg_sent < 55: risk += 10
+    risk += min(critical_cnt * 15, 30)
+    risk += min(high_cnt * 8, 20)
+    risk += min(len(news_list) * 3, 15)
+    return min(risk, 100), avg_sent, critical_cnt, high_cnt
+
+def _risk_label(risk: int) -> tuple:
+    if risk >= 70: return 'مرتفع جداً ⛔', '🔴'
+    if risk >= 50: return 'مرتفع 🚨', '🟠'
+    if risk >= 30: return 'متوسط ⚠️', '🟡'
+    return 'منخفض ✅', '🟢'
+
+def _bar(risk: int) -> str:
+    f = round(risk / 10)
+    return '█' * f + '░' * (10 - f)
+
+def _match(n: dict, keywords) -> bool:
+    hay = (n.get('title','') + n.get('summary','')).lower()
+    return any(k.lower() in hay for k in keywords)
+
+# Sub-menu
+async def _iran_menu(query):
+    kb = [
+        [InlineKeyboardButton('🎯 هل تضرب إيران؟',        callback_data='iran_general')],
+        [InlineKeyboardButton('🇦🇪 هل تستهدف الإمارات؟',  callback_data='iran_uae')],
+        [InlineKeyboardButton('⚔️ تحليل حرب إيران-أمريكا', callback_data='iran_usa_war')],
+        [InlineKeyboardButton('🔙 القائمة الرئيسية',       callback_data='main_menu')],
+    ]
+    await query.message.reply_text(
+        '🎯 *تحليل الملف الإيراني*\n\nاختر نوع التحليل:',
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+# 1. General Iran strike probability
+async def _iran_general(query):
     msg = await query.message.reply_text('⏳ جاري تحليل الوضع الإيراني...')
     try:
-        news = await fetch_news()
-        iran_news = [
-            n for n in news
-            if any(k in (n.get('title', '') + n.get('summary', '')) for k in IRAN_KEYWORDS)
-        ]
-
-        lines = ['🎯 *تحليل: هل تضرب إيران؟*\n']
+        news      = await fetch_news()
+        iran_news = [n for n in news if _match(n, IRAN_KW)]
+        lines     = ['🎯 *هل تضرب إيران؟ — تحليل شامل*\n']
 
         if not iran_news:
-            lines.append('📊 لا توجد مؤشرات تصعيد إيرانية حالياً')
-            lines.append('✅ *مستوى الخطر:* 🟢 منخفض')
+            lines += ['📊 لا توجد مؤشرات تصعيد إيرانية حالياً', '✅ *مستوى الخطر:* 🟢 منخفض']
         else:
-            sentiments   = [n.get('sentiment', 50) for n in iran_news]
-            avg_sent     = sum(sentiments) / len(sentiments)
-            critical_cnt = sum(1 for n in iran_news if n.get('priority') == 'critical')
-            high_cnt     = sum(1 for n in iran_news if n.get('priority') == 'high')
-
-            # Risk score (0-100)
-            risk = 0
-            if avg_sent < 25:   risk += 35
-            elif avg_sent < 40: risk += 20
-            elif avg_sent < 55: risk += 10
-            risk += min(critical_cnt * 15, 30)
-            risk += min(high_cnt * 8, 20)
-            risk += min(len(iran_news) * 3, 15)
-            risk = min(risk, 100)
-
-            if risk >= 70:   level, color = 'مرتفع جداً ⛔', '🔴'
-            elif risk >= 50: level, color = 'مرتفع 🚨', '🟠'
-            elif risk >= 30: level, color = 'متوسط ⚠️', '🟡'
-            else:            level, color = 'منخفض ✅', '🟢'
-
-            # Risk bar
-            filled = round(risk / 10)
-            bar = '█' * filled + '░' * (10 - filled)
-
-            lines.append(f'*📊 مستوى الخطر:* {color} {level}')
-            lines.append(f'*📉 مؤشر التصعيد:* `{bar}` {risk}%')
-            lines.append(f'*📰 أخبار مرصودة:* {len(iran_news)} خبر')
-            lines.append(f'*⚡ حرجة / عالية:* {critical_cnt} / {high_cnt}')
-            lines.append(f'*😟 المزاج العام:* {sentiment_label(int(avg_sent))}')
-            lines.append('')
-            lines.append('*📋 آخر التطورات:*')
+            risk, avg_s, crit, high = _calc_risk(iran_news)
+            lv, col = _risk_label(risk)
+            lines += [
+                f'*📊 مستوى الخطر:* {col} {lv}',
+                f'*📉 مؤشر التصعيد:* `{_bar(risk)}` {risk}%',
+                f'*📰 أخبار مرصودة:* {len(iran_news)} خبر',
+                f'*⚡ حرجة / عالية:* {crit} / {high}',
+                f'*😟 المزاج العام:* {sentiment_label(int(avg_s))}',
+                '',
+                '*📋 آخر التطورات:*',
+            ]
             for n in iran_news[:4]:
-                e = priority_icon(n.get('priority', ''))
-                lines.append(f'{e} {n.get("title","")[:70]}')
-                lines.append(f'   • {n.get("source","")} • {n.get("time","")}')
-                lines.append('')
+                e = priority_icon(n.get('priority',''))
+                lines += [f'{e} {n.get("title","")[:70]}',
+                          f'   📌 {n.get("source","")} • {n.get("time","")}', '']
 
         kb = [
-            [InlineKeyboardButton('🔄 تحديث', callback_data='iran_analysis')],
-            [InlineKeyboardButton('🔙 القائمة الرئيسية', callback_data='main_menu')],
+            [InlineKeyboardButton('🔄 تحديث', callback_data='iran_general'),
+             InlineKeyboardButton('🔙 رجوع',  callback_data='iran_analysis')],
         ]
-        await msg.edit_text(
-            '\n'.join(lines),
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+        await msg.edit_text('\n'.join(lines), parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(kb))
     except Exception as e:
-        logger.error(f'iran_analysis: {e}')
+        logger.error(f'iran_general: {e}')
+        await msg.edit_text(f'⚠️ خطأ: {e}')
+
+# 2. UAE threat from Iran
+async def _iran_uae(query):
+    msg = await query.message.reply_text('⏳ جاري تقييم التهديد للإمارات...')
+    try:
+        news     = await fetch_news()
+        iran_all = [n for n in news if _match(n, IRAN_KW)]
+        uae_iran = [n for n in iran_all if _match(n, UAE_KW)]
+        uae_all  = [n for n in news    if _match(n, UAE_KW)]
+
+        lines = ['🇦🇪 *هل تستهدف إيران الإمارات؟*\n']
+
+        if not uae_iran:
+            risk_g, avg_s, crit, high = _calc_risk(iran_all)
+            # Indirect risk from general Iran tension
+            indirect = round(risk_g * 0.4)
+            lv, col  = _risk_label(indirect)
+            lines += [
+                '📊 *لا توجد أخبار تستهدف الإمارات مباشرة*',
+                '',
+                '*🔍 تقييم التهديد غير المباشر:*',
+                f'  {col} *مستوى الخطر الجانبي:* {lv}',
+                f'  📉 المؤشر: `{_bar(indirect)}` {indirect}%',
+                '',
+                '_يعتمد على مستوى التصعيد الإيراني العام_',
+                '',
+                f'*📰 أخبار إيران العامة:* {len(iran_all)} خبر',
+                f'*📰 أخبار الإمارات:* {len(uae_all)} خبر',
+            ]
+        else:
+            risk, avg_s, crit, high = _calc_risk(uae_iran)
+            lv, col = _risk_label(risk)
+            lines += [
+                f'*🎯 مستوى التهديد المباشر:* {col} {lv}',
+                f'*📉 مؤشر الخطر:* `{_bar(risk)}` {risk}%',
+                f'*📰 أخبار إيران-الإمارات:* {len(uae_iran)} خبر',
+                f'*⚡ حرجة / عالية:* {crit} / {high}',
+                f'*😟 مزاج الأخبار:* {sentiment_label(int(avg_s))}',
+                '',
+                '*📋 الأخبار المرتبطة:*',
+            ]
+            for n in uae_iran[:4]:
+                e = priority_icon(n.get('priority',''))
+                lines += [f'{e} {n.get("title","")[:70]}',
+                          f'   📌 {n.get("source","")} • {n.get("time","")}', '']
+
+        kb = [
+            [InlineKeyboardButton('🔄 تحديث', callback_data='iran_uae'),
+             InlineKeyboardButton('🔙 رجوع',  callback_data='iran_analysis')],
+        ]
+        await msg.edit_text('\n'.join(lines), parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.error(f'iran_uae: {e}')
+        await msg.edit_text(f'⚠️ خطأ: {e}')
+
+# 3. Iran-USA War full expert analysis
+async def _iran_usa_war(query):
+    msg = await query.message.reply_text('⏳ جاري تجميع تحليلات الخبراء...')
+    try:
+        news      = await fetch_news()
+        iran_news = [n for n in news if _match(n, IRAN_KW)]
+        usa_iran  = [n for n in iran_news if _match(n, USA_KW)]
+        all_rel   = iran_news  # broader context
+
+        # Expert sources
+        expert_items = [
+            n for n in all_rel
+            if any(s in n.get('source','').lower() for s in EXPERT_SRC)
+        ]
+
+        risk_all, avg_s_all, crit_all, high_all = _calc_risk(all_rel)
+        risk_us,  avg_s_us,  crit_us,  high_us  = _calc_risk(usa_iran)
+
+        # Scenario probability model
+        #  - Diplomatic: high sentiment + low risk
+        #  - Limited strike: mid risk
+        #  - Full war: high risk + many critical
+        p_diplo  = max(5,  min(60, 100 - risk_us - (crit_us * 5)))
+        p_strike = max(10, min(55, risk_us // 2 + high_us * 5))
+        p_war    = max(3,  min(40, risk_us // 3 + crit_us * 8))
+        total    = p_diplo + p_strike + p_war
+        p_diplo  = round(p_diplo  / total * 100)
+        p_strike = round(p_strike / total * 100)
+        p_war    = 100 - p_diplo - p_strike
+
+        # Trend
+        if risk_us >= 60:   trend = '📈 تصاعدي — التوتر في ارتفاع'
+        elif risk_us >= 35: trend = '📊 مستقر — وضع مراقبة'
+        else:               trend = '📉 هادئ — دبلوماسية نشطة'
+
+        lv_all, col_all = _risk_label(risk_all)
+        lv_us,  col_us  = _risk_label(risk_us)
+
+        lines = [
+            '⚔️ *تحليل حرب إيران-أمريكا*',
+            '_مدعوم بتحليل ذكاء اصطناعي + مصادر خبراء_\n',
+            '━━━━━━━━━━━━━━━━━━',
+            '*📡 الوضع الراهن:*',
+            f'  {col_us}  مستوى التوتر الإيراني-الأمريكي: *{lv_us}*',
+            f'  📉 المؤشر: `{_bar(risk_us)}` {risk_us}%',
+            f'  📈 الاتجاه: {trend}',
+            f'  📰 أخبار مرصودة: {len(usa_iran)} خبر إيران-أمريكا',
+            f'  📚 مصادر خبراء: {len(expert_items)} مصدر موثوق',
+            '',
+            '━━━━━━━━━━━━━━━━━━',
+            '*🔭 توقعات السيناريوهات:*',
+            '',
+            f'🕊 *التسوية الدبلوماسية*',
+            f'   الاحتمالية: `{"█" * round(p_diplo/10)}{"░" * (10-round(p_diplo/10))}` {p_diplo}%',
+            f'   _مفاوضات، وساطة، ضغط دبلوماسي_',
+            '',
+            f'💥 *ضربة محدودة / عملية نوعية*',
+            f'   الاحتمالية: `{"█" * round(p_strike/10)}{"░" * (10-round(p_strike/10))}` {p_strike}%',
+            f'   _استهداف مواقع بعيداً عن حرب شاملة_',
+            '',
+            f'🔥 *حرب مفتوحة*',
+            f'   الاحتمالية: `{"█" * round(p_war/10)}{"░" * (10-round(p_war/10))}` {p_war}%',
+            f'   _تصعيد كامل، مشاركة أطراف إقليمية_',
+        ]
+
+        # Expert opinions
+        if expert_items:
+            lines += ['', '━━━━━━━━━━━━━━━━━━',
+                      '*🎓 ما يقوله الخبراء والمصادر الموثوقة:*', '']
+            for n in expert_items[:3]:
+                e = priority_icon(n.get('priority',''))
+                lines.append(f'{e} *{n.get("source","")}*')
+                analysis = n.get('analysis','')
+                summary  = n.get('summary','')
+                excerpt  = analysis if (analysis and 'Error' not in analysis) else summary
+                if excerpt:
+                    lines.append(f'   _{excerpt[:150]}..._')
+                lines.append(f'   📌 {n.get("title","")[:65]}')
+                lines.append('')
+
+        # AI conclusion
+        lines += [
+            '━━━━━━━━━━━━━━━━━━',
+            '*🧠 الاستنتاج التحليلي:*',
+        ]
+        if risk_us >= 65:
+            lines.append(
+                '_المؤشرات الحالية تشير إلى توتر حاد. '
+                'الضغط العسكري والدبلوماسي في أعلى مستوياته، '
+                'واحتمال عملية محدودة قائم. '
+                'النافذة الدبلوماسية ضيقة لكنها لم تُغلق بعد._'
+            )
+        elif risk_us >= 40:
+            lines.append(
+                '_الوضع في مرحلة التصعيد التدريجي. '
+                'الأطراف تتبادل الضغوط دون تجاوز خط الاشتباك المباشر. '
+                'المفاوضات غير المعلنة محتملة في الخلفية._'
+            )
+        else:
+            lines.append(
+                '_المؤشرات الحالية تصب في مصلحة الاحتواء الدبلوماسي. '
+                'لا توجد مؤشرات على ضربة وشيكة. '
+                'متابعة مستمرة ضرورية لرصد أي تحول مفاجئ._'
+            )
+
+        kb = [
+            [InlineKeyboardButton('🔄 تحديث', callback_data='iran_usa_war'),
+             InlineKeyboardButton('🔙 رجوع',  callback_data='iran_analysis')],
+        ]
+        await msg.edit_text('\n'.join(lines), parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.error(f'iran_usa_war: {e}')
         await msg.edit_text(f'⚠️ خطأ في التحليل: {e}')
 
 
 # ─── News by Region ──────────────────────────────────────────────────────────
 
 REGIONS = {
-    'gulf':   ('🛢 الخليج العربي',   ('gulf', 'خليج', 'سعودي', 'إمارات', 'كويت', 'قطر', 'بحرين', 'عُمان')),
-    'levant': ('🕌 المشرق العربي',   ('levant', 'سوريا', 'لبنان', 'الأردن', 'فلسطين', 'العراق')),
-    'egypt':  ('🏛 مصر وشمال أفريقيا', ('egypt', 'مصر', 'ليبيا', 'تونس', 'المغرب')),
-    'global': ('🌐 أخبار دولية',     ('global', 'america', 'europe', 'أمريكا', 'أوروبا')),
+    'gulf':   ('🛢 الخليج العربي',
+               ('سعودي','السعودية','الرياض','كويت','قطر','بحرين','عُمان','مسقط',
+                'الدوحة','المنامة','gulf')),
+    'uae':    ('🇦🇪 الإمارات العربية',
+               ('الإمارات','إمارات','UAE','أبوظبي','دبي','أبو ظبي',
+                'الشارقة','عجمان','الفجيرة','رأس الخيمة')),
+    'global': ('🌐 أخبار عالمية',
+               ('أمريكا','الولايات المتحدة','أوروبا','الصين','روسيا',
+                'global','america','europe','china','russia','بريطانيا')),
+    'houthi': ('🎖 اليمن والحوثيون',
+               ('اليمن','الحوثي','حوثي','صنعاء','عدن','أنصار الله',
+                'هجوم صاروخي','مسيّرة','بحر أحمر','باب المندب')),
 }
 
 async def _region_menu(query):
     kb = [
-        [InlineKeyboardButton('🛢 الخليج',      callback_data='region_gulf'),
-         InlineKeyboardButton('🕌 المشرق',      callback_data='region_levant')],
-        [InlineKeyboardButton('🏛 مصر / شمال أفريقيا', callback_data='region_egypt'),
-         InlineKeyboardButton('🌐 دولي',        callback_data='region_global')],
-        [InlineKeyboardButton('📋 الكل',        callback_data='region_all')],
+        [InlineKeyboardButton('🛢 الخليج',           callback_data='region_gulf'),
+         InlineKeyboardButton('🇦🇪 الإمارات',         callback_data='region_uae')],
+        [InlineKeyboardButton('🌐 عالمي',            callback_data='region_global'),
+         InlineKeyboardButton('🎖 اليمن / الحوثيون', callback_data='region_houthi')],
+        [InlineKeyboardButton('📋 الكل',             callback_data='region_all')],
         [InlineKeyboardButton('🔙 القائمة الرئيسية', callback_data='main_menu')],
     ]
     await query.message.reply_text('🌍 اختر المنطقة:', reply_markup=InlineKeyboardMarkup(kb))
