@@ -9,6 +9,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+if not BOT_TOKEN:
+    raise RuntimeError('BOT_TOKEN environment variable is not set')
 INTEL_SERVER = 'https://web-production-007d2.up.railway.app'
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
